@@ -1,6 +1,7 @@
 import os
 import google.generativeai as genai
 from openai import AsyncOpenAI
+import httpx
 import logging
 
 # Configure logging
@@ -8,6 +9,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- AI Client Configurations ---
+openrouter_client = None
 try:
     # Configure Gemini
     gemini_api_key = os.getenv("GEMINI_API_KEY")
@@ -20,11 +22,14 @@ try:
     openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
     if not openrouter_api_key:
         logger.warning("OPENROUTER_API_KEY not found. OpenRouter fallback will be unavailable.")
-
-    openrouter_client = AsyncOpenAI(
-        api_key=openrouter_api_key,
-        base_url="https://openrouter.ai/api/v1",
-    )
+    else:
+        # Explicitly create an httpx client to avoid internal proxy/state issues on Render
+        http_client = httpx.AsyncClient()
+        openrouter_client = AsyncOpenAI(
+            api_key=openrouter_api_key,
+            base_url="https://openrouter.ai/api/v1",
+            http_client=http_client,
+        )
 except Exception as e:
     logger.error(f"Error during AI client configuration: {e}")
     openrouter_client = None

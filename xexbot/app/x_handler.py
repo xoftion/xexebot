@@ -77,7 +77,7 @@ async def check_mentions():
         mentions = client.get_users_mentions(
             id=USER_ID,
             since_id=last_mention_id,
-            max_results=20, # Process a batch of up to 20 new mentions
+            max_results=20,  # Process a batch of up to 20 new mentions
             tweet_fields=["author_id", "created_at"]
         )
 
@@ -122,7 +122,9 @@ async def check_mentions():
         latest_mention_id = new_mentions[-1].id
         set_last_mention_id(latest_mention_id)
 
+    except tweepy.errors.TooManyRequests:
+        logger.warning("X API rate limit hit. Skipping this polling cycle.")
     except tweepy.errors.TweepyException as e:
-        logger.error(f"Error fetching mentions: {e}")
+        logger.error(f"An error occurred while fetching mentions: {e}")
     except Exception as e:
         logger.error(f"An unexpected error occurred in check_mentions: {e}")
