@@ -1,6 +1,6 @@
 import os
 import google.generativeai as genai
-from openai import AsyncOpenAI  # Use AsyncOpenAI for non-blocking calls
+from openai import AsyncOpenAI
 import logging
 
 # Configure logging
@@ -16,7 +16,7 @@ try:
     else:
         genai.configure(api_key=gemini_api_key)
 
-    # Configure OpenRouter client (for Grok)
+    # Configure OpenRouter client
     openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
     if not openrouter_api_key:
         logger.warning("OPENROUTER_API_KEY not found. OpenRouter fallback will be unavailable.")
@@ -32,7 +32,7 @@ except Exception as e:
 
 async def generate_response(prompt: str) -> str:
     """
-    Generates a response using Gemini, with a fallback to Grok via OpenRouter.
+    Generates a response using Gemini, with a fallback to a different model via OpenRouter.
 
     Args:
         prompt: The input prompt for the AI model.
@@ -41,31 +41,30 @@ async def generate_response(prompt: str) -> str:
         The generated text response.
     """
     # --- Try Gemini First ---
-    if genai.api_key:
-        try:
-            logger.info("Attempting to generate response with Gemini...")
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = await model.generate_content_async(prompt)
-            logger.info("Successfully generated response with Gemini.")
-            return response.text
-        except Exception as e:
-            logger.warning(f"Gemini API call failed: {e}. Falling back to OpenRouter.")
+    try:
+        logger.info("Attempting to generate response with Gemini...")
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = await model.generate_content_async(prompt)
+        logger.info("Successfully generated response with Gemini.")
+        return response.text
+    except Exception as e:
+        logger.warning(f"Gemini API call failed: {e}. Falling back to OpenRouter.")
 
-    # --- Fallback to Grok via OpenRouter ---
-    if openrouter_client and openrouter_client.api_key:
+    # --- Fallback to Llama via OpenRouter ---
+    if openrouter_client:
         try:
-            logger.info("Attempting to generate response with Grok (OpenRouter)...")
+            logger.info("Attempting to generate response with Llama (OpenRouter)...")
             chat_completion = await openrouter_client.chat.completions.create(
-                model="meta-llama/llama-3-8b-instruct",  # A more reliable and common model
+                model="meta-llama/llama-3-8b-instruct",
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant."},
                     {"role": "user", "content": prompt}
                 ]
             )
-            logger.info("Successfully generated response with Grok (OpenRouter).")
+            logger.info("Successfully generated response with Llama (OpenRouter).")
             return chat_completion.choices[0].message.content
-        except Exception as e:
-            logger.error(f"OpenRouter API call failed: {e}")
+        except Exception as e_fallback:
+            logger.error(f"OpenRouter API call failed: {e_fallback}")
             return "Error: Both primary and fallback AI services failed."
 
     logger.error("All AI services are unavailable. Check API keys and configurations.")
