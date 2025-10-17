@@ -23,8 +23,10 @@ try:
     if not openrouter_api_key:
         logger.warning("OPENROUTER_API_KEY not found. OpenRouter fallback will be unavailable.")
     else:
-        # Explicitly create an httpx client to avoid internal proxy/state issues on Render
-        http_client = httpx.AsyncClient()
+        # Create a more robust httpx client with custom transport and longer timeouts
+        transport = httpx.AsyncHTTPTransport(retries=2)
+        http_client = httpx.AsyncClient(transport=transport, timeout=30.0)
+
         openrouter_client = AsyncOpenAI(
             api_key=openrouter_api_key,
             base_url="https://openrouter.ai/api/v1",
@@ -48,10 +50,17 @@ async def generate_response(prompt: str) -> str:
     # --- Try Gemini First ---
     try:
         logger.info("Attempting to generate response with Gemini...")
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Use a more standard and widely available model
+        model = genai.GenerativeModel('gemini-pro')
         response = await model.generate_content_async(prompt)
-        logger.info("Successfully generated response with Gemini.")
-        return response.text
+        # Check if the response has content before returning
+        if response.parts:
+            logger.info("Successfully generated response with Gemini.")
+            return response.text
+        else:
+            # This can happen if the model returns an empty response due to safety settings etc.
+            logger.warning("Gemini returned an empty response. Falling back to OpenRouter.")
+            raise ValueError("Empty response from Gemini")
     except Exception as e:
         logger.warning(f"Gemini API call failed: {e}. Falling back to OpenRouter.")
 

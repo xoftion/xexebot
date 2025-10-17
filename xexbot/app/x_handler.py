@@ -3,6 +3,7 @@ import os
 import logging
 import asyncio
 from .db import get_last_mention_id, set_last_mention_id, get_db_connection
+from typing import Callable, Awaitable
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -58,14 +59,11 @@ def reply_to_mention(mention_id: int, reply_text: str):
     except tweepy.errors.TweepyException as e:
         logger.error(f"Error replying to mention {mention_id}: {e}")
 
-async def check_mentions():
+async def check_mentions(generate_response_func: Callable[[str], Awaitable[str]]):
     """
     Checks for new mentions since the last processed one, generates a reply,
     and posts it. Runs asynchronously.
     """
-    # Local import to prevent circular dependency issues
-    from .ai_handler import generate_response
-
     if not client or not USER_ID:
         logger.warning("Cannot check mentions: client or USER_ID not configured.")
         return
@@ -74,23 +72,20 @@ async def check_mentions():
     logger.info(f"Checking for new mentions since tweet ID: {last_mention_id}")
 
     try:
-        mentions = client.get_users_mentions(
+        mentions_response = client.get_users_mentions(
             id=USER_ID,
             since_id=last_mention_id,
-            max_results=20,  # Process a batch of up to 20 new mentions
+            max_results=20,
             tweet_fields=["author_id", "created_at"]
         )
 
-        if not mentions.data:
+        if not mentions_response.data:
             logger.info("No new mentions found.")
             return
 
-        logger.info(f"Found {len(mentions.data)} new mentions.")
+        new_mentions = sorted(mentions_response.data, key=lambda m: m.created_at)
+        logger.info(f"Found {len(new_mentions)} new mentions.")
 
-        # Sort mentions chronologically to process them in order
-        new_mentions = sorted(mentions.data, key=lambda m: m.created_at)
-
-        # Generate reply tasks for all new mentions
         tasks = []
         for mention in new_mentions:
             prompt = (
@@ -99,26 +94,26 @@ async def check_mentions():
                 f"Use emojis and relevant slang where appropriate. Keep it concise (under 280 chars).\n\n"
                 f"Tweet: \"{mention.text}\""
             )
-            tasks.append(generate_response(prompt))
+            tasks.append(generate_response_func(prompt))
 
-        # Run all AI generation tasks concurrently
         replies = await asyncio.gather(*tasks)
 
-        # Post the replies and update the database
+        conn = get_db_connection()
+        cursor = conn.cursor()
         for mention, reply_text in zip(new_mentions, replies):
-            if "Error:" not in reply_text:
-                reply_to_mention(mention.id, reply_text)
-                # Store in DB
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute(
-                    "INSERT OR IGNORE INTO conversation_history (tweet_id, author_id, text, response) VALUES (?, ?, ?, ?)",
-                    (mention.id, mention.author_id, mention.text, reply_text)
-                )
-                conn.commit()
-                conn.close()
+            try:
+                if "Error:" not in reply_text:
+                    reply_to_mention(mention.id, reply_text)
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO conversation_history (tweet_id, author_id, text, response) VALUES (?, ?, ?, ?)",
+                        (mention.id, mention.author_id, mention.text, reply_text)
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to process and reply to mention {mention.id}: {e}")
+                continue
+        conn.close()
 
-        # Update the last mention ID to the newest one processed
         latest_mention_id = new_mentions[-1].id
         set_last_mention_id(latest_mention_id)
 

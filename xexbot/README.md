@@ -1,7 +1,7 @@
 # Xexbot: Human-Like X Automation Bot
 
 ## About
-Xexbot is an AI-powered bot for ethical X automation, mimicking human interactions for crypto thought leadership (e.g., @PiLord_officia). Builds trust via scam callouts, problem guides, and trends—powered by Gemini/OpenRouter (Grok). Free X API compliant, deploys serverless.
+Xexbot is an AI-powered bot for ethical X automation, mimicking human interactions for crypto thought leadership (e.g., @PiLord_officia). Builds trust via scam callouts, problem guides, and trends—powered by Gemini/OpenRouter. Free X API compliant, deploys serverless.
 
 ## Quick Start (Local)
 1. `pip install -r requirements.txt`
