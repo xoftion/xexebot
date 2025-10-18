@@ -1,5 +1,6 @@
 import tweepy
 import os
+import re
 import logging
 import asyncio
 from .db import get_last_mention_id, set_last_mention_id, get_db_connection
@@ -95,10 +96,31 @@ async def post_strategic_content(generate_response_func: Callable[[str], Awaitab
         logger.error(f"An unexpected error occurred in post_strategic_content: {e}")
 
 
+def get_user_info(username: str):
+    """Fetches profile information for a given X username."""
+    if not client:
+        return None
+    try:
+        # Using the v2 endpoint for users by username
+        response = client.get_user(username=username, user_fields=["created_at", "description", "public_metrics"])
+        if response.data:
+            user = response.data
+            return {
+                "username": user.username,
+                "name": user.name,
+                "created_at": user.created_at.isoformat(),
+                "followers_count": user.public_metrics.get("followers_count", 0),
+                "tweet_count": user.public_metrics.get("tweet_count", 0),
+                "description": user.description,
+            }
+    except tweepy.errors.TweepyException as e:
+        logger.error(f"Could not fetch info for user @{username}: {e}")
+    return None
+
 async def check_mentions(generate_response_func: Callable[[str], Awaitable[str]]):
     """
-    Checks for new mentions since the last processed one, generates a reply,
-    and posts it. Runs asynchronously.
+    Checks for a new mention, researches any users mentioned within it for legitimacy,
+    and then generates a safe, factual reply.
     """
     if not client or not USER_ID:
         logger.warning("Cannot check mentions: client or USER_ID not configured.")
@@ -108,55 +130,57 @@ async def check_mentions(generate_response_func: Callable[[str], Awaitable[str]]
     logger.info(f"Checking for new mentions since tweet ID: {last_mention_id}")
 
     try:
-        # Fetch only the single most recent mention to stay within free tier limits.
         mentions_response = client.get_users_mentions(
-            id=USER_ID,
-            since_id=last_mention_id,
-            max_results=1,
-            tweet_fields=["author_id", "created_at"]
+            id=USER_ID, since_id=last_mention_id, max_results=1, tweet_fields=["author_id", "created_at"]
         )
-
         if not mentions_response.data:
             logger.info("No new mentions found.")
             return
 
-        new_mentions = sorted(mentions_response.data, key=lambda m: m.created_at)
-        logger.info(f"Found {len(new_mentions)} new mentions.")
+        mention = mentions_response.data[0]
+        logger.info(f"Found new mention {mention.id}: \"{mention.text}\"")
 
-        tasks = []
-        for mention in new_mentions:
-            prompt = (
-                f"You are a crypto expert named Xexbot. Your persona is like @PiLord_officia on X. "
-                f"Provide a human-like, insightful, and trustworthy reply to the following tweet. "
-                f"Use emojis and relevant slang where appropriate. Keep it concise (under 280 chars).\n\n"
-                f"Tweet: \"{mention.text}\""
-            )
-            tasks.append(generate_response_func(prompt))
+        # --- Research & Scam Detection Step ---
+        mentioned_usernames = re.findall(r'@(\w+)', mention.text)
+        research_data = "No other users were mentioned."
+        if mentioned_usernames:
+            author_response = client.get_user(id=mention.author_id, user_fields=["username"])
+            author_username = author_response.data.username if author_response.data else ""
 
-        replies = await asyncio.gather(*tasks)
+            users_to_research = [u for u in mentioned_usernames if u.lower() not in [USER_ID.lower(), author_username.lower()]]
 
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        for mention, reply_text in zip(new_mentions, replies):
-            try:
-                if "Error:" not in reply_text:
-                    reply_to_mention(mention.id, reply_text)
-                    cursor.execute(
-                        "INSERT OR IGNORE INTO conversation_history (tweet_id, author_id, text, response) VALUES (?, ?, ?, ?)",
-                        (mention.id, mention.author_id, mention.text, reply_text)
-                    )
-                    conn.commit()
-            except Exception as e:
-                logger.error(f"Failed to process and reply to mention {mention.id}: {e}")
-                continue
-        conn.close()
+            if users_to_research:
+                logger.info(f"Researching mentioned users: {users_to_research}")
+                user_info_list = [get_user_info(u) for u in users_to_research]
+                user_info_list = [u for u in user_info_list if u] # Filter out any users that couldn't be found
+                if user_info_list:
+                    research_data = "Research on mentioned accounts:\n" + "\n".join([str(u) for u in user_info_list])
 
-        latest_mention_id = new_mentions[-1].id
-        set_last_mention_id(latest_mention_id)
+        # --- Multi-Step AI Prompt for Safe Reply Generation ---
+        prompt = (
+            "You are a helpful, knowledgeable, and security-conscious crypto expert named Xexbot. Your persona is like @PiLord_officia on X.\n"
+            "You have received the following mention:\n"
+            f"Tweet: \"{mention.text}\"\n\n"
+            "You have also conducted research on other accounts mentioned in the tweet:\n"
+            f"Research Data: {research_data}\n\n"
+            "**Your Task (in two steps):**\n"
+            "1.  **Analyze for Scams:** Based on the tweet content and the research data, determine if it is likely a scam or contains misinformation. A very new account with few followers suggesting a 'helper' is a huge red flag.\n"
+            "2.  **Generate a Reply:**\n"
+            "    - **If it is a scam or misinformation:** Do NOT agree with it. Politely warn the original user and provide safe, correct information. For example, suggest they contact an official support channel or you directly via DM. Never repeat the scammer's username.\n"
+            "    - **If it is a legitimate question or comment:** Provide a helpful, insightful, and factual reply. Be friendly and use emojis where appropriate.\n\n"
+            "Your final reply must be concise (under 280 characters) and directly address the original user."
+        )
+
+        reply_text = await generate_response_func(prompt)
+
+        if "Error:" not in reply_text:
+            reply_to_mention(mention.id, reply_text)
+
+        set_last_mention_id(mention.id)
 
     except tweepy.errors.TooManyRequests:
         logger.warning("X API rate limit hit. Skipping this polling cycle.")
     except tweepy.errors.TweepyException as e:
-        logger.error(f"An error occurred while fetching mentions: {e}")
+        logger.error(f"An error occurred during the mention check process: {e}")
     except Exception as e:
         logger.error(f"An unexpected error occurred in check_mentions: {e}")

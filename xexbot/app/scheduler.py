@@ -30,31 +30,29 @@ def ping_self():
 
 def poll_x_sync():
     """Synchronous wrapper to run the async check_mentions function."""
-    logger.info("Polling X for new mentions...")
+    logger.info("Running daily mention check...")
     asyncio.run(check_mentions(generate_response))
 
 def strategic_post_sync():
     """Synchronous wrapper to run the async post_strategic_content function."""
-    logger.info("Creating and posting strategic content...")
+    logger.info("Running daily strategic content post...")
     asyncio.run(post_strategic_content(generate_response))
 
 def run_scheduler():
     """The main loop for the scheduler, running pending jobs."""
-    logger.info("Setting up balanced posting schedule...")
+    logger.info("Setting up predictable posting schedule...")
     schedule.every(10).minutes.do(ping_self)
 
-    # Proactive content generation (approx. 60 posts/month)
-    schedule.every(12).hours.do(strategic_post_sync)
+    # Proactive content generation (1 post/day)
+    schedule.every().day.at("09:00").do(strategic_post_sync)
 
-    # Reactive mention replies (approx. 30 posts/month)
-    schedule.every(24).hours.do(poll_x_sync)
+    # Reactive mention replies (1 reply/day)
+    schedule.every().day.at("15:00").do(poll_x_sync)
 
     logger.info("Scheduler started. Waiting for scheduled jobs...")
 
     # Initial run to avoid waiting for the first interval
     ping_self()
-    # We remove the initial post on startup to avoid hitting rate limits during deployment cycles.
-    # The bot will now wait for its first scheduled run.
 
     while True:
         schedule.run_pending()
