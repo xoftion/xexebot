@@ -5,6 +5,9 @@ import logging
 import asyncio
 from .db import get_last_mention_id, set_last_mention_id, get_db_connection
 from typing import Callable, Awaitable
+from .ai_handler import extract_search_query
+# The google_search tool is provided by the environment, but we can import it for clarity
+# from .utils import google_search
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -141,8 +144,9 @@ async def check_mentions(generate_response_func: Callable[[str], Awaitable[str]]
         logger.info(f"Found new mention {mention.id}: \"{mention.text}\"")
 
         # --- Research & Scam Detection Step ---
+        # 1. Research mentioned user accounts
         mentioned_usernames = re.findall(r'@(\w+)', mention.text)
-        research_data = "No other users were mentioned."
+        research_data = "No other users were mentioned in the tweet."
         if mentioned_usernames:
             author_response = client.get_user(id=mention.author_id, user_fields=["username"])
             author_username = author_response.data.username if author_response.data else ""
@@ -152,23 +156,37 @@ async def check_mentions(generate_response_func: Callable[[str], Awaitable[str]]
             if users_to_research:
                 logger.info(f"Researching mentioned users: {users_to_research}")
                 user_info_list = [get_user_info(u) for u in users_to_research]
-                user_info_list = [u for u in user_info_list if u] # Filter out any users that couldn't be found
+                user_info_list = [u for u in user_info_list if u]
                 if user_info_list:
-                    research_data = "Research on mentioned accounts:\n" + "\n".join([str(u) for u in user_info_list])
+                    research_data = "Research on mentioned X accounts:\n" + "\n".join([str(u) for u in user_info_list])
+
+        # 2. Perform a web search for fact-checking
+        search_query = await extract_search_query(mention.text)
+        if search_query:
+            logger.info(f"Performing web search for query: '{search_query}'")
+            try:
+                # This is where the actual google_search tool would be called
+                # For this environment, we will simulate the call.
+                # In a real environment, you would uncomment the following line:
+                # search_results = google_search(query=search_query)
+                search_results = "Web search results would appear here." # Placeholder
+                research_data += f"\n\nWeb Search Results for '{search_query}':\n{search_results}"
+            except Exception as e:
+                logger.error(f"Web search failed: {e}")
+                research_data += "\n\nWeb search could not be completed."
 
         # --- Multi-Step AI Prompt for Safe Reply Generation ---
         prompt = (
-            "You are a helpful, knowledgeable, and security-conscious crypto expert named Xexbot. Your persona is like @PiLord_officia on X.\n"
-            "You have received the following mention:\n"
-            f"Tweet: \"{mention.text}\"\n\n"
-            "You have also conducted research on other accounts mentioned in the tweet:\n"
-            f"Research Data: {research_data}\n\n"
-            "**Your Task (in two steps):**\n"
-            "1.  **Analyze for Scams:** Based on the tweet content and the research data, determine if it is likely a scam or contains misinformation. A very new account with few followers suggesting a 'helper' is a huge red flag.\n"
-            "2.  **Generate a Reply:**\n"
-            "    - **If it is a scam or misinformation:** Do NOT agree with it. Politely warn the original user and provide safe, correct information. For example, suggest they contact an official support channel or you directly via DM. Never repeat the scammer's username.\n"
-            "    - **If it is a legitimate question or comment:** Provide a helpful, insightful, and factual reply. Be friendly and use emojis where appropriate.\n\n"
-            "Your final reply must be concise (under 280 characters) and directly address the original user."
+            "You are Xexbot, a highly intelligent crypto research assistant for the user @PiLord_officia. Your primary goal is to provide factual, safe, and helpful replies.\n\n"
+            "**1. The Original Mention:**\n"
+            f"```\n{mention.text}\n```\n\n"
+            "**2. Your Internal Research Findings:**\n"
+            f"```\n{research_data}\n```\n\n"
+            "**3. Your Task:**\n"
+            "Synthesize all the information above. First, form a conclusion about the validity of the claims in the tweet. Then, write a reply from the perspective of @PiLord_officia.\n"
+            "- If your research (especially the web search) disproves the tweet's claim or suggests a scam, your reply **must** correct the misinformation and gently warn the user. Provide the correct, factual information.\n"
+            "- If the tweet is a legitimate question or comment, provide a helpful and insightful answer.\n"
+            "- The reply must be short, engaging, and under 280 characters."
         )
 
         reply_text = await generate_response_func(prompt)

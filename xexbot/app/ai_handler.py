@@ -83,3 +83,25 @@ async def generate_response(prompt: str) -> str:
 
     logger.error("All AI services are unavailable. Check API keys and configurations.")
     return "Error: AI services are not configured."
+
+async def extract_search_query(text: str) -> str:
+    """
+    Uses the AI to extract a concise search query from a longer text.
+    """
+    try:
+        prompt = (
+            "You are an expert at distilling information. Read the following tweet and extract the most "
+            "important and specific keywords to use for a web search to verify its claims. "
+            "The output should be a clean, concise search query, with no extra text or explanation.\n\n"
+            f"Tweet: \"{text}\"\n\n"
+            "Search Query:"
+        )
+        # Use Gemini for this utility task as it's fast and efficient
+        model = genai.GenerativeModel('gemini-1.0-pro')
+        response = await model.generate_content_async(prompt)
+        if response.parts:
+            # Clean up the output to ensure it's just the query
+            return response.text.strip().replace("\"", "")
+    except Exception as e:
+        logger.error(f"Failed to extract search query: {e}")
+    return "" # Return empty string on failure
