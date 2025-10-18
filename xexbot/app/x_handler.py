@@ -59,6 +59,42 @@ def reply_to_mention(mention_id: int, reply_text: str):
     except tweepy.errors.TweepyException as e:
         logger.error(f"Error replying to mention {mention_id}: {e}")
 
+async def post_strategic_content(generate_response_func: Callable[[str], Awaitable[str]]):
+    """
+    Generates and posts a new, original tweet based on the user's recent timeline.
+    """
+    if not client or not USER_ID:
+        logger.warning("Cannot post strategic content: client or USER_ID not configured.")
+        return
+
+    logger.info("Fetching recent tweets for context...")
+    try:
+        recent_tweets_response = client.get_users_tweets(id=USER_ID, max_results=10)
+        if not recent_tweets_response.data:
+            logger.warning("No recent tweets found to generate context.")
+            return
+
+        # Create a context string from the recent tweets
+        context = "\n".join([f"- \"{tweet.text}\"" for tweet in recent_tweets_response.data])
+
+        prompt = (
+            f"Analyze the style and topics of these recent tweets from @PiLord_officia:\n{context}\n\n"
+            "Now, generate a new, short, and engaging tweet in the same style. The tweet should be a "
+            "thought-provoking question or a sharp insight related to crypto, Pi Network, or market trends. "
+            "Keep it under 260 characters. Do not use hashtags."
+        )
+
+        new_tweet_text = await generate_response_func(prompt)
+
+        if "Error:" not in new_tweet_text:
+            post_to_x(new_tweet_text)
+
+    except tweepy.errors.TweepyException as e:
+        logger.error(f"An error occurred while fetching user tweets: {e}")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred in post_strategic_content: {e}")
+
+
 async def check_mentions(generate_response_func: Callable[[str], Awaitable[str]]):
     """
     Checks for new mentions since the last processed one, generates a reply,
@@ -72,10 +108,11 @@ async def check_mentions(generate_response_func: Callable[[str], Awaitable[str]]
     logger.info(f"Checking for new mentions since tweet ID: {last_mention_id}")
 
     try:
+        # Fetch only the single most recent mention to stay within free tier limits.
         mentions_response = client.get_users_mentions(
             id=USER_ID,
             since_id=last_mention_id,
-            max_results=20,
+            max_results=1,
             tweet_fields=["author_id", "created_at"]
         )
 

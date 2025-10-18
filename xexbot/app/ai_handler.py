@@ -50,8 +50,8 @@ async def generate_response(prompt: str) -> str:
     # --- Try Gemini First ---
     try:
         logger.info("Attempting to generate response with Gemini...")
-        # Use a more standard and widely available model
-        model = genai.GenerativeModel('gemini-pro')
+        # Use a standard, widely available model to avoid 404 errors.
+        model = genai.GenerativeModel('gemini-1.0-pro')
         response = await model.generate_content_async(prompt)
         # Check if the response has content before returning
         if response.parts:

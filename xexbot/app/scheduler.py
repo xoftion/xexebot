@@ -5,7 +5,7 @@ import os
 import logging
 import threading
 import asyncio
-from .x_handler import check_mentions
+from .x_handler import check_mentions, post_strategic_content
 from .ai_handler import generate_response
 
 # Configure logging
@@ -31,19 +31,29 @@ def ping_self():
 def poll_x_sync():
     """Synchronous wrapper to run the async check_mentions function."""
     logger.info("Polling X for new mentions...")
-    # Pass the generate_response function to avoid circular imports
     asyncio.run(check_mentions(generate_response))
+
+def strategic_post_sync():
+    """Synchronous wrapper to run the async post_strategic_content function."""
+    logger.info("Creating and posting strategic content...")
+    asyncio.run(post_strategic_content(generate_response))
 
 def run_scheduler():
     """The main loop for the scheduler, running pending jobs."""
+    logger.info("Setting up balanced posting schedule...")
     schedule.every(10).minutes.do(ping_self)
-    schedule.every(15).minutes.do(poll_x_sync)
+
+    # Proactive content generation (approx. 60 posts/month)
+    schedule.every(12).hours.do(strategic_post_sync)
+
+    # Reactive mention replies (approx. 30 posts/month)
+    schedule.every(24).hours.do(poll_x_sync)
 
     logger.info("Scheduler started. Waiting for scheduled jobs...")
 
     # Initial run to avoid waiting for the first interval
     ping_self()
-    poll_x_sync()
+    strategic_post_sync() # Start with an original post
 
     while True:
         schedule.run_pending()
