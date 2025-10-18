@@ -53,7 +53,8 @@ def run_scheduler():
 
     # Initial run to avoid waiting for the first interval
     ping_self()
-    strategic_post_sync() # Start with an original post
+    # We remove the initial post on startup to avoid hitting rate limits during deployment cycles.
+    # The bot will now wait for its first scheduled run.
 
     while True:
         schedule.run_pending()
